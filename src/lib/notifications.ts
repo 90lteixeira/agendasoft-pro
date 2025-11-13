@@ -1,4 +1,4 @@
-import { createClient } from '@/lib/supabase';
+import { supabase } from '@/lib/supabase';
 
 export interface NotificationSchedule {
   appointment_id: string;
@@ -16,8 +16,6 @@ export interface NotificationSchedule {
  * - 1 dia antes (se cliente tiver telefone/email)
  */
 export class NotificationService {
-  private supabase = createClient();
-
   /**
    * Agenda notificações para um novo agendamento
    */
@@ -36,9 +34,10 @@ export class NotificationService {
     notifications.push({
       appointment_id: schedule.appointment_id,
       type: 'reminder_10min',
+      title: 'Lembrete de Agendamento',
       scheduled_for: tenMinutesBefore.toISOString(),
       message: `Lembrete: ${schedule.service} com ${schedule.client_name} em 10 minutos`,
-      sent: false
+      read: false
     });
 
     // Notificação 1 dia antes (se tiver contato)
@@ -46,16 +45,15 @@ export class NotificationService {
       notifications.push({
         appointment_id: schedule.appointment_id,
         type: 'reminder_1day',
+        title: 'Lembrete de Agendamento',
         scheduled_for: oneDayBefore.toISOString(),
-        recipient_phone: schedule.client_phone,
-        recipient_email: schedule.client_email,
         message: `Lembrete: Você tem ${schedule.service} agendado para amanhã às ${appointment_time}`,
-        sent: false
+        read: false
       });
     }
 
     // Salvar no banco
-    const { error } = await this.supabase
+    const { error } = await supabase
       .from('notifications')
       .insert(notifications);
 
@@ -73,10 +71,10 @@ export class NotificationService {
   async getPendingNotifications() {
     const now = new Date().toISOString();
 
-    const { data, error } = await this.supabase
+    const { data, error } = await supabase
       .from('notifications')
       .select('*')
-      .eq('sent', false)
+      .eq('read', false)
       .lte('scheduled_for', now)
       .order('scheduled_for', { ascending: true });
 
@@ -89,16 +87,16 @@ export class NotificationService {
   }
 
   /**
-   * Marca notificação como enviada
+   * Marca notificação como lida/enviada
    */
-  async markAsSent(notificationId: string) {
-    const { error } = await this.supabase
+  async markAsRead(notificationId: string) {
+    const { error } = await supabase
       .from('notifications')
-      .update({ sent: true, sent_at: new Date().toISOString() })
+      .update({ read: true })
       .eq('id', notificationId);
 
     if (error) {
-      console.error('Erro ao marcar notificação como enviada:', error);
+      console.error('Erro ao marcar notificação como lida:', error);
     }
   }
 
@@ -115,16 +113,10 @@ export class NotificationService {
     // - WhatsApp: Twilio WhatsApp API
 
     // Por enquanto, apenas log
-    if (notification.recipient_phone) {
-      console.log(`📱 SMS para ${notification.recipient_phone}: ${notification.message}`);
-    }
+    console.log(`📱 Notificação: ${notification.message}`);
 
-    if (notification.recipient_email) {
-      console.log(`📧 Email para ${notification.recipient_email}: ${notification.message}`);
-    }
-
-    // Marcar como enviada
-    await this.markAsSent(notification.id);
+    // Marcar como lida
+    await this.markAsRead(notification.id);
   }
 
   /**
@@ -149,11 +141,11 @@ export class NotificationService {
    * Cancela notificações de um agendamento
    */
   async cancelNotifications(appointmentId: string) {
-    const { error } = await this.supabase
+    const { error } = await supabase
       .from('notifications')
       .delete()
       .eq('appointment_id', appointmentId)
-      .eq('sent', false);
+      .eq('read', false);
 
     if (error) {
       console.error('Erro ao cancelar notificações:', error);

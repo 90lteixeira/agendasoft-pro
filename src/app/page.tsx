@@ -4,8 +4,8 @@ import { useState, useEffect } from 'react';
 import { Language, getTranslations } from '@/lib/i18n';
 import { LanguageSelector } from '@/components/custom/language-selector';
 import { AppointmentDetailModal } from '@/components/custom/appointment-detail-modal';
-import { Calendar, Users, Clock, ArrowRight, Sparkles, Plus, Search, Filter, Bell, CheckCircle2, XCircle, AlertCircle, MoreVertical, Image, ListTodo, Phone, Mail, ChevronLeft, ChevronRight } from 'lucide-react';
-import { createClient } from '@/lib/supabase';
+import { Calendar, Users, Clock, ArrowRight, Sparkles, Plus, Search, Filter, Bell, CheckCircle2, XCircle, AlertCircle, MoreVertical, ChevronLeft, ChevronRight, Camera, ListChecks } from 'lucide-react';
+import { supabase } from '@/lib/supabase';
 import { notificationService } from '@/lib/notifications';
 
 // Tipos
@@ -14,23 +14,51 @@ interface Client {
   name: string;
   phone?: string;
   email?: string;
-  is_quick_client: boolean;
+  country_code?: string;
+}
+
+interface ChecklistItem {
+  id: string;
+  text: string;
+  completed: boolean;
 }
 
 interface Appointment {
   id: string;
   client_id?: string;
   client_name: string;
-  date: string;
-  time: string;
+  appointment_date: string;
+  appointment_time: string;
   service: string;
   status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
   notes?: string;
-  tasks?: { id: string; text: string; completed: boolean }[];
+  checklist?: ChecklistItem[];
   photos?: string[];
 }
 
+interface UserSettings {
+  id: string;
+  user_id: string;
+  language: Language;
+  created_at?: string;
+  updated_at?: string;
+}
+
 type ViewMode = 'daily' | 'weekly' | 'monthly';
+
+// Lista de códigos de país (DDI)
+const countryCodes = [
+  { code: '+55', country: 'Brasil', flag: '🇧🇷' },
+  { code: '+1', country: 'EUA/Canadá', flag: '🇺🇸' },
+  { code: '+351', country: 'Portugal', flag: '🇵🇹' },
+  { code: '+34', country: 'Espanha', flag: '🇪🇸' },
+  { code: '+44', country: 'Reino Unido', flag: '🇬🇧' },
+  { code: '+33', country: 'França', flag: '🇫🇷' },
+  { code: '+49', country: 'Alemanha', flag: '🇩🇪' },
+  { code: '+39', country: 'Itália', flag: '🇮🇹' },
+  { code: '+54', country: 'Argentina', flag: '🇦🇷' },
+  { code: '+52', country: 'México', flag: '🇲🇽' },
+];
 
 export default function Home() {
   const [selectedLanguage, setSelectedLanguage] = useState<Language>('pt');
@@ -44,23 +72,77 @@ export default function Home() {
   const [selectedAppointment, setSelectedAppointment] = useState<Appointment | null>(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [pendingNotifications, setPendingNotifications] = useState(0);
+  const [userId, setUserId] = useState<string>('default-user');
+  const [selectedClientId, setSelectedClientId] = useState<string>('');
   
   const t = getTranslations(selectedLanguage);
-  const supabase = createClient();
 
   useEffect(() => {
-    const savedLang = localStorage.getItem('appLanguage') as Language;
-    if (savedLang) {
-      setSelectedLanguage(savedLang);
-      setShowWelcome(false);
-      loadData();
-      loadNotifications();
-    }
+    loadUserLanguagePreference();
   }, []);
+
+  const loadUserLanguagePreference = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('user_settings')
+        .select('language')
+        .eq('user_id', userId)
+        .single();
+
+      if (data && data.language) {
+        setSelectedLanguage(data.language as Language);
+        setShowWelcome(false);
+        loadData();
+        loadNotifications();
+      } else {
+        const savedLang = localStorage.getItem('appLanguage') as Language;
+        if (savedLang) {
+          setSelectedLanguage(savedLang);
+          setShowWelcome(false);
+          loadData();
+          loadNotifications();
+          await saveLanguagePreference(savedLang);
+        }
+      }
+    } catch (error) {
+      console.error('Erro ao carregar preferência de idioma:', error);
+      const savedLang = localStorage.getItem('appLanguage') as Language;
+      if (savedLang) {
+        setSelectedLanguage(savedLang);
+        setShowWelcome(false);
+        loadData();
+        loadNotifications();
+      }
+    }
+  };
+
+  const saveLanguagePreference = async (language: Language) => {
+    try {
+      const { error } = await supabase
+        .from('user_settings')
+        .upsert({
+          user_id: userId,
+          language: language,
+          updated_at: new Date().toISOString()
+        }, {
+          onConflict: 'user_id'
+        });
+
+      if (error) throw error;
+      localStorage.setItem('appLanguage', language);
+    } catch (error) {
+      console.error('Erro ao salvar preferência de idioma:', error);
+      localStorage.setItem('appLanguage', language);
+    }
+  };
+
+  const handleLanguageChange = async (language: Language) => {
+    setSelectedLanguage(language);
+    await saveLanguagePreference(language);
+  };
 
   const loadData = async () => {
     try {
-      // Carregar clientes
       const { data: clientsData } = await supabase
         .from('clients')
         .select('*')
@@ -68,14 +150,48 @@ export default function Home() {
       
       if (clientsData) setClients(clientsData);
 
-      // Carregar agendamentos
       const { data: appointmentsData } = await supabase
         .from('appointments')
         .select('*')
-        .order('date', { ascending: true })
-        .order('time', { ascending: true });
+        .order('appointment_date', { ascending: true })
+        .order('appointment_time', { ascending: true });
       
-      if (appointmentsData) setAppointments(appointmentsData);
+      if (appointmentsData) {
+        // Parse JSON fields corretamente
+        const parsedAppointments = appointmentsData.map(apt => {
+          let checklist: ChecklistItem[] = [];
+          let photos: string[] = [];
+          
+          // Tentar parsear checklist se existir
+          if (apt.checklist) {
+            try {
+              checklist = typeof apt.checklist === 'string' 
+                ? JSON.parse(apt.checklist) 
+                : apt.checklist;
+            } catch (e) {
+              checklist = [];
+            }
+          }
+          
+          // Tentar parsear photos se existir
+          if (apt.photos) {
+            try {
+              photos = typeof apt.photos === 'string' 
+                ? JSON.parse(apt.photos) 
+                : apt.photos;
+            } catch (e) {
+              photos = [];
+            }
+          }
+          
+          return {
+            ...apt,
+            checklist,
+            photos
+          };
+        });
+        setAppointments(parsedAppointments);
+      }
     } catch (error) {
       console.error('Erro ao carregar dados:', error);
     }
@@ -90,11 +206,37 @@ export default function Home() {
     }
   };
 
-  const handleContinue = () => {
-    localStorage.setItem('appLanguage', selectedLanguage);
+  const handleContinue = async () => {
+    await saveLanguagePreference(selectedLanguage);
     setShowWelcome(false);
     loadData();
     loadNotifications();
+  };
+
+  const formatPhoneNumber = (value: string, countryCode: string) => {
+    // Remove tudo que não é número
+    const numbers = value.replace(/\D/g, '');
+    
+    // Aplica máscara baseada no código do país
+    if (countryCode === '+55') {
+      // Brasil: (XX) XXXXX-XXXX ou (XX) XXXX-XXXX
+      if (numbers.length <= 10) {
+        return numbers.replace(/(\d{2})(\d{4})(\d{0,4})/, '($1) $2-$3');
+      }
+      return numbers.replace(/(\d{2})(\d{5})(\d{0,4})/, '($1) $2-$3');
+    } else if (countryCode === '+1') {
+      // EUA/Canadá: (XXX) XXX-XXXX
+      return numbers.replace(/(\d{3})(\d{3})(\d{0,4})/, '($1) $2-$3');
+    } else {
+      // Outros países: formato genérico
+      return numbers.replace(/(\d{2,3})(\d{3,4})(\d{0,4})/, '$1 $2-$3');
+    }
+  };
+
+  const validateEmail = (email: string): boolean => {
+    if (!email) return true; // Email é opcional
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return emailRegex.test(email);
   };
 
   const createAppointment = async (appointmentData: Partial<Appointment>) => {
@@ -107,11 +249,9 @@ export default function Home() {
 
       if (error) throw error;
       if (data) {
-        setAppointments([...appointments, data]);
+        await loadData(); // Recarregar dados após criar
         setShowNewAppointment(false);
-        
-        // Agendar notificações automaticamente via trigger do banco
-        // Mas também podemos fazer manualmente se necessário
+        setSelectedClientId('');
         loadNotifications();
       }
     } catch (error) {
@@ -119,8 +259,14 @@ export default function Home() {
     }
   };
 
-  const createClient = async (clientData: Partial<Client>) => {
+  const createNewClient = async (clientData: Partial<Client>) => {
     try {
+      // Validar email se fornecido
+      if (clientData.email && !validateEmail(clientData.email)) {
+        alert('Por favor, insira um email válido.');
+        return;
+      }
+
       const { data, error } = await supabase
         .from('clients')
         .insert([clientData])
@@ -139,22 +285,58 @@ export default function Home() {
 
   const updateAppointment = async (id: string, updateData: any) => {
     try {
+      // Preparar dados para salvar no banco
+      const dataToSave: any = {};
+      
+      if (updateData.notes !== undefined) {
+        dataToSave.notes = updateData.notes;
+      }
+      
+      if (updateData.checklist !== undefined) {
+        dataToSave.checklist = JSON.stringify(updateData.checklist);
+      }
+      
+      if (updateData.photos !== undefined) {
+        dataToSave.photos = JSON.stringify(updateData.photos);
+      }
+      
+      if (updateData.status !== undefined) {
+        dataToSave.status = updateData.status;
+      }
+
       const { error } = await supabase
         .from('appointments')
-        .update(updateData)
+        .update(dataToSave)
         .eq('id', id);
 
       if (error) throw error;
       
-      setAppointments(appointments.map(apt => 
-        apt.id === id ? { ...apt, ...updateData } : apt
-      ));
+      // Recarregar dados após atualizar
+      await loadData();
     } catch (error) {
       console.error('Erro ao atualizar agendamento:', error);
     }
   };
 
   const updateAppointmentStatus = async (id: string, status: Appointment['status']) => {
+    const appointment = appointments.find(apt => apt.id === id);
+    
+    // Confirmação antes de concluir ou cancelar
+    if (status === 'completed') {
+      if (!confirm('Tem certeza que deseja CONCLUIR este agendamento? Esta ação não poderá ser desfeita.')) {
+        return;
+      }
+    } else if (status === 'cancelled') {
+      // Não permitir cancelar se já foi concluído
+      if (appointment?.status === 'completed') {
+        alert('Não é possível cancelar um agendamento já concluído.');
+        return;
+      }
+      if (!confirm('Tem certeza que deseja CANCELAR este agendamento?')) {
+        return;
+      }
+    }
+    
     await updateAppointment(id, { status });
   };
 
@@ -219,7 +401,7 @@ export default function Home() {
     const matchesSearch = apt.client_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          apt.service.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const aptDate = new Date(apt.date);
+    const aptDate = new Date(apt.appointment_date);
     const today = new Date(selectedDate);
     
     if (viewMode === 'daily') {
@@ -344,7 +526,8 @@ export default function Home() {
               </button>
               <LanguageSelector
                 selectedLanguage={selectedLanguage}
-                onSelect={setSelectedLanguage}
+                onSelect={handleLanguageChange}
+                compact={true}
               />
             </div>
           </div>
@@ -459,97 +642,105 @@ export default function Home() {
               <p className="text-xl font-bold text-gray-600 dark:text-gray-400">{t.noAppointments}</p>
             </div>
           ) : (
-            filteredAppointments.map((apt) => (
-              <div
-                key={apt.id}
-                className="group bg-white dark:bg-gray-800 rounded-2xl shadow-lg hover:shadow-2xl transition-all border-2 border-orange-100 dark:border-orange-900 hover:border-orange-300 dark:hover:border-orange-700 p-6"
-              >
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex-1 space-y-3">
-                    <div className="flex items-center gap-3 flex-wrap">
-                      <h3 className="text-xl font-bold text-gray-900 dark:text-white">
-                        {apt.client_name}
-                      </h3>
-                      <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold border-2 ${getStatusColor(apt.status)}`}>
-                        {getStatusIcon(apt.status)}
-                        {t[apt.status]}
-                      </span>
+            filteredAppointments.map((apt) => {
+              const checklistCompleted = apt.checklist?.filter(item => item.completed).length || 0;
+              const checklistTotal = apt.checklist?.length || 0;
+              const hasPhotos = (apt.photos?.length || 0) > 0;
+              const hasChecklist = checklistTotal > 0;
+              
+              return (
+                <div
+                  key={apt.id}
+                  className="group bg-white dark:bg-gray-800 rounded-2xl shadow-lg hover:shadow-2xl transition-all border-2 border-orange-100 dark:border-orange-900 hover:border-orange-300 dark:hover:border-orange-700 p-6"
+                >
+                  <div className="flex items-start justify-between gap-4">
+                    <div className="flex-1 space-y-3">
+                      <div className="flex items-center gap-3 flex-wrap">
+                        <h3 className="text-xl font-bold text-gray-900 dark:text-white">
+                          {apt.client_name}
+                        </h3>
+                        <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold border-2 ${getStatusColor(apt.status)}`}>
+                          {getStatusIcon(apt.status)}
+                          {t[apt.status]}
+                        </span>
+                        
+                        {/* Indicadores de Ficha e Fotos */}
+                        {hasChecklist && (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-purple-100 text-purple-700 border-2 border-purple-300">
+                            <ListChecks className="w-3 h-3" />
+                            {checklistCompleted}/{checklistTotal}
+                          </span>
+                        )}
+                        {hasPhotos && (
+                          <span className="inline-flex items-center gap-1 px-3 py-1 rounded-full text-xs font-bold bg-pink-100 text-pink-700 border-2 border-pink-300">
+                            <Camera className="w-3 h-3" />
+                            {apt.photos?.length}
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
+                        <div className="flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-orange-500" />
+                          <span className="font-medium">{new Date(apt.appointment_date).toLocaleDateString()}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Clock className="w-4 h-4 text-pink-500" />
+                          <span className="font-medium">{apt.appointment_time}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <Sparkles className="w-4 h-4 text-purple-500" />
+                          <span className="font-medium">{apt.service}</span>
+                        </div>
+                      </div>
+
+                      {apt.notes && (
+                        <p className="text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 p-3 rounded-xl">
+                          {apt.notes}
+                        </p>
+                      )}
                     </div>
 
-                    <div className="flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
-                      <div className="flex items-center gap-2">
-                        <Calendar className="w-4 h-4 text-orange-500" />
-                        <span className="font-medium">{new Date(apt.date).toLocaleDateString()}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Clock className="w-4 h-4 text-pink-500" />
-                        <span className="font-medium">{apt.time}</span>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        <Sparkles className="w-4 h-4 text-purple-500" />
-                        <span className="font-medium">{apt.service}</span>
-                      </div>
+                    <div className="flex flex-col gap-2">
+                      <button
+                        onClick={() => setSelectedAppointment(apt)}
+                        className="p-2 rounded-xl bg-gradient-to-br from-orange-100 to-pink-100 dark:from-orange-900/30 dark:to-pink-900/30 hover:scale-110 transition-transform"
+                      >
+                        <MoreVertical className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+                      </button>
                     </div>
+                  </div>
 
-                    {apt.notes && (
-                      <p className="text-sm text-gray-600 dark:text-gray-400 bg-gray-50 dark:bg-gray-900 p-3 rounded-xl">
-                        {apt.notes}
-                      </p>
+                  {/* Ações Rápidas */}
+                  <div className="flex gap-2 mt-4 pt-4 border-t-2 border-gray-100 dark:border-gray-700">
+                    {apt.status === 'pending' && (
+                      <button
+                        onClick={() => updateAppointmentStatus(apt.id, 'confirmed')}
+                        className="flex-1 px-4 py-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl font-bold hover:scale-105 transition-transform text-sm"
+                      >
+                        Confirmar
+                      </button>
                     )}
-
-                    <div className="flex gap-2">
-                      {apt.tasks && apt.tasks.length > 0 && (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-lg text-xs font-bold">
-                          <ListTodo className="w-3 h-3" />
-                          {apt.tasks.length} {apt.tasks.length === 1 ? 'tarefa' : 'tarefas'}
-                        </span>
-                      )}
-                      {apt.photos && apt.photos.length > 0 && (
-                        <span className="inline-flex items-center gap-1 px-3 py-1 bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 rounded-lg text-xs font-bold">
-                          <Image className="w-3 h-3" />
-                          {apt.photos.length} {apt.photos.length === 1 ? 'foto' : 'fotos'}
-                        </span>
-                      )}
-                    </div>
-                  </div>
-
-                  <div className="flex flex-col gap-2">
-                    <button
-                      onClick={() => setSelectedAppointment(apt)}
-                      className="p-2 rounded-xl bg-gradient-to-br from-orange-100 to-pink-100 dark:from-orange-900/30 dark:to-pink-900/30 hover:scale-110 transition-transform"
-                    >
-                      <MoreVertical className="w-5 h-5 text-orange-600 dark:text-orange-400" />
-                    </button>
+                    {apt.status === 'confirmed' && (
+                      <button
+                        onClick={() => updateAppointmentStatus(apt.id, 'completed')}
+                        className="flex-1 px-4 py-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-xl font-bold hover:scale-105 transition-transform text-sm"
+                      >
+                        Concluir
+                      </button>
+                    )}
+                    {apt.status !== 'completed' && (
+                      <button
+                        onClick={() => updateAppointmentStatus(apt.id, 'cancelled')}
+                        className="flex-1 px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-xl font-bold hover:scale-105 transition-transform text-sm"
+                      >
+                        Cancelar
+                      </button>
+                    )}
                   </div>
                 </div>
-
-                {/* Ações Rápidas */}
-                <div className="flex gap-2 mt-4 pt-4 border-t-2 border-gray-100 dark:border-gray-700">
-                  {apt.status === 'pending' && (
-                    <button
-                      onClick={() => updateAppointmentStatus(apt.id, 'confirmed')}
-                      className="flex-1 px-4 py-2 bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 rounded-xl font-bold hover:scale-105 transition-transform text-sm"
-                    >
-                      Confirmar
-                    </button>
-                  )}
-                  {apt.status === 'confirmed' && (
-                    <button
-                      onClick={() => updateAppointmentStatus(apt.id, 'completed')}
-                      className="flex-1 px-4 py-2 bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300 rounded-xl font-bold hover:scale-105 transition-transform text-sm"
-                    >
-                      Concluir
-                    </button>
-                  )}
-                  <button
-                    onClick={() => updateAppointmentStatus(apt.id, 'cancelled')}
-                    className="flex-1 px-4 py-2 bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300 rounded-xl font-bold hover:scale-105 transition-transform text-sm"
-                  >
-                    Cancelar
-                  </button>
-                </div>
-              </div>
-            ))
+              );
+            })
           )}
         </div>
       </div>
@@ -559,7 +750,10 @@ export default function Home() {
         <AppointmentDetailModal
           appointment={selectedAppointment}
           language={selectedLanguage}
-          onClose={() => setSelectedAppointment(null)}
+          onClose={() => {
+            setSelectedAppointment(null);
+            loadData(); // Recarregar dados ao fechar modal
+          }}
           onUpdate={updateAppointment}
         />
       )}
@@ -582,8 +776,8 @@ export default function Home() {
                 createAppointment({
                   client_id: clientId || undefined,
                   client_name: selectedClient?.name || (formData.get('client_name') as string),
-                  date: formData.get('date') as string,
-                  time: formData.get('time') as string,
+                  appointment_date: formData.get('date') as string,
+                  appointment_time: formData.get('time') as string,
                   service: formData.get('service') as string,
                   status: 'pending',
                   notes: formData.get('notes') as string,
@@ -597,6 +791,8 @@ export default function Home() {
                 </label>
                 <select
                   name="client_id"
+                  value={selectedClientId}
+                  onChange={(e) => setSelectedClientId(e.target.value)}
                   className="w-full px-4 py-3 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-900 focus:border-orange-500 focus:ring-4 focus:ring-orange-200 dark:focus:ring-orange-900/50 transition-all"
                 >
                   <option value="">Cliente avulso (digite o nome abaixo)</option>
@@ -608,16 +804,19 @@ export default function Home() {
                 </select>
               </div>
 
-              <div>
-                <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.clientName} (se avulso)
-                </label>
-                <input
-                  type="text"
-                  name="client_name"
-                  className="w-full px-4 py-3 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-900 focus:border-orange-500 focus:ring-4 focus:ring-orange-200 dark:focus:ring-orange-900/50 transition-all"
-                />
-              </div>
+              {!selectedClientId && (
+                <div>
+                  <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
+                    {t.clientName}
+                  </label>
+                  <input
+                    type="text"
+                    name="client_name"
+                    required={!selectedClientId}
+                    className="w-full px-4 py-3 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-900 focus:border-orange-500 focus:ring-4 focus:ring-orange-200 dark:focus:ring-orange-900/50 transition-all"
+                  />
+                </div>
+              )}
 
               <div className="grid grid-cols-2 gap-4">
                 <div>
@@ -670,7 +869,10 @@ export default function Home() {
               <div className="flex gap-3 pt-4">
                 <button
                   type="button"
-                  onClick={() => setShowNewAppointment(false)}
+                  onClick={() => {
+                    setShowNewAppointment(false);
+                    setSelectedClientId('');
+                  }}
                   className="flex-1 px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:scale-105 transition-transform"
                 >
                   {t.cancel}
@@ -699,11 +901,11 @@ export default function Home() {
               onSubmit={(e) => {
                 e.preventDefault();
                 const formData = new FormData(e.currentTarget);
-                createClient({
+                createNewClient({
                   name: formData.get('name') as string,
                   phone: formData.get('phone') as string,
                   email: formData.get('email') as string,
-                  is_quick_client: formData.get('is_quick_client') === 'on',
+                  country_code: formData.get('country_code') as string,
                 });
               }}
               className="p-6 space-y-4"
@@ -724,34 +926,42 @@ export default function Home() {
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
                   {t.phone}
                 </label>
-                <input
-                  type="tel"
-                  name="phone"
-                  className="w-full px-4 py-3 rounded-xl border-2 border-pink-200 dark:border-pink-800 bg-white dark:bg-gray-900 focus:border-pink-500 focus:ring-4 focus:ring-pink-200 dark:focus:ring-pink-900/50 transition-all"
-                />
+                <div className="flex gap-2">
+                  <select
+                    name="country_code"
+                    defaultValue="+55"
+                    className="w-32 px-3 py-3 rounded-xl border-2 border-pink-200 dark:border-pink-800 bg-white dark:bg-gray-900 focus:border-pink-500 focus:ring-4 focus:ring-pink-200 dark:focus:ring-pink-900/50 transition-all text-sm"
+                  >
+                    {countryCodes.map(({ code, country, flag }) => (
+                      <option key={code} value={code}>
+                        {flag} {code}
+                      </option>
+                    ))}
+                  </select>
+                  <input
+                    type="tel"
+                    name="phone"
+                    placeholder="(00) 00000-0000"
+                    onChange={(e) => {
+                      const countryCode = (e.target.form?.country_code as any)?.value || '+55';
+                      e.target.value = formatPhoneNumber(e.target.value, countryCode);
+                    }}
+                    className="flex-1 px-4 py-3 rounded-xl border-2 border-pink-200 dark:border-pink-800 bg-white dark:bg-gray-900 focus:border-pink-500 focus:ring-4 focus:ring-pink-200 dark:focus:ring-pink-900/50 transition-all"
+                  />
+                </div>
               </div>
 
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.email}
+                  {t.email} <span className="text-gray-500 font-normal">(opcional)</span>
                 </label>
                 <input
                   type="email"
                   name="email"
+                  placeholder="exemplo@email.com"
                   className="w-full px-4 py-3 rounded-xl border-2 border-pink-200 dark:border-pink-800 bg-white dark:bg-gray-900 focus:border-pink-500 focus:ring-4 focus:ring-pink-200 dark:focus:ring-pink-900/50 transition-all"
                 />
-              </div>
-
-              <div className="flex items-center gap-3 p-4 bg-purple-50 dark:bg-purple-900/20 rounded-xl border-2 border-purple-200 dark:border-purple-800">
-                <input
-                  type="checkbox"
-                  name="is_quick_client"
-                  id="is_quick_client"
-                  className="w-5 h-5 rounded border-2 border-purple-300 text-purple-600 focus:ring-4 focus:ring-purple-200"
-                />
-                <label htmlFor="is_quick_client" className="text-sm font-bold text-purple-700 dark:text-purple-300">
-                  {t.quickClient} - {t.quickClientDesc}
-                </label>
+                <p className="text-xs text-gray-500 mt-1">Será validado automaticamente se fornecido</p>
               </div>
 
               <div className="flex gap-3 pt-4">
