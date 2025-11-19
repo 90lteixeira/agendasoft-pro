@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
-import { X, Plus, Trash2, Check, Camera } from 'lucide-react';
+import { useState, useEffect } from 'react';
 import { Language, getTranslations } from '@/lib/i18n';
+import { Camera, ListChecks, Plus, Trash2, CheckCircle2, Circle, X, Save, Edit3 } from 'lucide-react';
 
 interface ChecklistItem {
   id: string;
@@ -10,336 +10,330 @@ interface ChecklistItem {
   completed: boolean;
 }
 
-interface AppointmentDetailModalProps {
-  appointment: {
-    id: string;
-    client_name: string;
-    appointment_date: string;
-    appointment_time: string;
-    service: string;
-    status: string;
-    notes?: string;
-    checklist?: ChecklistItem[];
-    photos?: string[];
-  };
-  language: Language;
-  onClose: () => void;
-  onUpdate: (id: string, data: any) => void;
+interface Appointment {
+  id: string;
+  client_id?: string;
+  client_name: string;
+  appointment_date: string;
+  appointment_time: string;
+  service: string;
+  status: 'pending' | 'confirmed' | 'completed' | 'cancelled';
+  notes?: string;
+  checklist?: ChecklistItem[];
+  photos?: string[];
 }
 
-export function AppointmentDetailModal({ 
-  appointment, 
-  language, 
-  onClose, 
-  onUpdate 
+interface AppointmentDetailModalProps {
+  appointment: Appointment;
+  language: Language;
+  onClose: () => void;
+  onUpdate: (id: string, updateData: any) => void;
+}
+
+export function AppointmentDetailModal({
+  appointment,
+  language,
+  onClose,
+  onUpdate
 }: AppointmentDetailModalProps) {
-  const t = getTranslations(language);
+  const [isEditing, setIsEditing] = useState(false);
   const [notes, setNotes] = useState(appointment.notes || '');
   const [checklist, setChecklist] = useState<ChecklistItem[]>(appointment.checklist || []);
   const [photos, setPhotos] = useState<string[]>(appointment.photos || []);
   const [newChecklistItem, setNewChecklistItem] = useState('');
-  const [activeTab, setActiveTab] = useState<'notes' | 'checklist' | 'photos'>('notes');
 
-  const saveNotes = () => {
+  const t = getTranslations(language);
+
+  useEffect(() => {
+    // Carregar dados do localStorage quando o modal abre
+    try {
+      const savedChecklist = localStorage.getItem(`checklist_${appointment.id}`);
+      if (savedChecklist) {
+        setChecklist(JSON.parse(savedChecklist));
+      }
+    } catch (e) {
+      setChecklist([]);
+    }
+
+    try {
+      const savedPhotos = localStorage.getItem(`photos_${appointment.id}`);
+      if (savedPhotos) {
+        setPhotos(JSON.parse(savedPhotos));
+      }
+    } catch (e) {
+      setPhotos([]);
+    }
+  }, [appointment.id]);
+
+  const handleSave = () => {
+    // Salvar checklist no localStorage
+    localStorage.setItem(`checklist_${appointment.id}`, JSON.stringify(checklist));
+
+    // Salvar photos no localStorage
+    localStorage.setItem(`photos_${appointment.id}`, JSON.stringify(photos));
+
+    // Atualizar apenas notes no banco
     onUpdate(appointment.id, { notes });
-  };
 
-  const saveChecklist = (updatedChecklist: ChecklistItem[]) => {
-    onUpdate(appointment.id, { checklist: updatedChecklist });
-  };
-
-  const savePhotos = (updatedPhotos: string[]) => {
-    onUpdate(appointment.id, { photos: updatedPhotos });
+    setIsEditing(false);
   };
 
   const addChecklistItem = () => {
-    if (!newChecklistItem.trim()) return;
-    
-    const newItem: ChecklistItem = {
-      id: Date.now().toString(),
-      text: newChecklistItem,
-      completed: false
-    };
-    
-    const updatedChecklist = [...checklist, newItem];
-    setChecklist(updatedChecklist);
-    setNewChecklistItem('');
-    
-    // Salvar automaticamente
-    saveChecklist(updatedChecklist);
+    if (newChecklistItem.trim()) {
+      const newItem: ChecklistItem = {
+        id: Date.now().toString(),
+        text: newChecklistItem.trim(),
+        completed: false
+      };
+      setChecklist([...checklist, newItem]);
+      setNewChecklistItem('');
+    }
   };
 
   const toggleChecklistItem = (id: string) => {
-    const updatedChecklist = checklist.map(item =>
+    setChecklist(checklist.map(item =>
       item.id === id ? { ...item, completed: !item.completed } : item
-    );
-    setChecklist(updatedChecklist);
-    saveChecklist(updatedChecklist);
+    ));
   };
 
   const removeChecklistItem = (id: string) => {
-    const updatedChecklist = checklist.filter(item => item.id !== id);
-    setChecklist(updatedChecklist);
-    saveChecklist(updatedChecklist);
+    setChecklist(checklist.filter(item => item.id !== id));
   };
 
-  const handlePhotoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files) return;
-
-    // Converter para base64 (para demonstração - em produção, usar storage)
-    Array.from(files).forEach(file => {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        const base64 = reader.result as string;
-        const updatedPhotos = [...photos, base64];
-        setPhotos(updatedPhotos);
-        savePhotos(updatedPhotos);
-      };
-      reader.readAsDataURL(file);
-    });
+  const addPhoto = () => {
+    // Simular upload de foto (em produção, seria um file input)
+    const mockPhotoUrl = `https://picsum.photos/400/300?random=${Date.now()}`;
+    setPhotos([...photos, mockPhotoUrl]);
   };
 
   const removePhoto = (index: number) => {
-    const updatedPhotos = photos.filter((_, i) => i !== index);
-    setPhotos(updatedPhotos);
-    savePhotos(updatedPhotos);
+    setPhotos(photos.filter((_, i) => i !== index));
   };
 
-  const completedCount = checklist.filter(item => item.completed).length;
-  const totalCount = checklist.length;
-  const progress = totalCount > 0 ? (completedCount / totalCount) * 100 : 0;
+  const checklistCompleted = checklist.filter(item => item.completed).length;
+  const checklistTotal = checklist.length;
 
   return (
     <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
-      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-3xl w-full max-h-[90vh] overflow-y-auto">
+      <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
         {/* Header */}
-        <div className="sticky top-0 bg-gradient-to-r from-orange-500 via-pink-500 to-purple-600 p-6 rounded-t-2xl flex items-center justify-between z-10">
-          <div>
-            <h2 className="text-2xl font-bold text-white">{appointment.client_name}</h2>
-            <p className="text-white/80 text-sm">
-              {new Date(appointment.appointment_date).toLocaleDateString()} às {appointment.appointment_time}
-            </p>
+        <div className="sticky top-0 bg-gradient-to-r from-orange-500 via-pink-500 to-purple-600 p-6 rounded-t-2xl">
+          <div className="flex items-center justify-between">
+            <div>
+              <h2 className="text-2xl font-bold text-white">{appointment.client_name}</h2>
+              <p className="text-white/80 text-sm">
+                {new Date(appointment.appointment_date + 'T00:00:00').toLocaleDateString()} às {appointment.appointment_time}
+              </p>
+            </div>
+            <button
+              onClick={onClose}
+              className="p-2 rounded-xl bg-white/20 hover:bg-white/30 transition-colors"
+            >
+              <X className="w-6 h-6 text-white" />
+            </button>
           </div>
-          <button
-            onClick={onClose}
-            className="p-2 hover:bg-white/20 rounded-xl transition-colors"
-          >
-            <X className="w-6 h-6 text-white" />
-          </button>
         </div>
 
         <div className="p-6 space-y-6">
           {/* Informações Básicas */}
-          <div className="bg-gradient-to-br from-orange-50 to-pink-50 dark:from-orange-900/20 dark:to-pink-900/20 p-4 rounded-xl border-2 border-orange-200 dark:border-orange-800">
-            <h3 className="font-bold text-lg mb-2 text-orange-700 dark:text-orange-300">
-              {t.service}
-            </h3>
-            <p className="text-gray-700 dark:text-gray-300">{appointment.service}</p>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div className="bg-gradient-to-br from-orange-50 to-pink-50 dark:from-orange-900/20 dark:to-pink-900/20 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <ListChecks className="w-5 h-5 text-orange-600" />
+                <span className="font-bold text-orange-700 dark:text-orange-300">Serviço</span>
+              </div>
+              <p className="text-gray-700 dark:text-gray-300">{appointment.service}</p>
+            </div>
+
+            <div className="bg-gradient-to-br from-pink-50 to-purple-50 dark:from-pink-900/20 dark:to-purple-900/20 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <CheckCircle2 className="w-5 h-5 text-pink-600" />
+                <span className="font-bold text-pink-700 dark:text-pink-300">Status</span>
+              </div>
+              <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold ${
+                appointment.status === 'confirmed' ? 'bg-green-100 text-green-700 border-green-300' :
+                appointment.status === 'pending' ? 'bg-yellow-100 text-yellow-700 border-yellow-300' :
+                appointment.status === 'completed' ? 'bg-blue-100 text-blue-700 border-blue-300' :
+                'bg-red-100 text-red-700 border-red-300'
+              } border-2`}>
+                {appointment.status === 'pending' ? 'Pendente' :
+                 appointment.status === 'confirmed' ? 'Confirmado' :
+                 appointment.status === 'completed' ? 'Concluído' : 'Cancelado'}
+              </span>
+            </div>
+
+            <div className="bg-gradient-to-br from-purple-50 to-orange-50 dark:from-purple-900/20 dark:to-orange-900/20 p-4 rounded-xl">
+              <div className="flex items-center gap-2 mb-2">
+                <Camera className="w-5 h-5 text-purple-600" />
+                <span className="font-bold text-purple-700 dark:text-purple-300">Progresso</span>
+              </div>
+              <div className="space-y-1">
+                <div className="flex items-center justify-between text-sm">
+                  <span>Ficha:</span>
+                  <span className="font-bold">{checklistCompleted}/{checklistTotal}</span>
+                </div>
+                <div className="flex items-center justify-between text-sm">
+                  <span>Fotos:</span>
+                  <span className="font-bold">{photos.length}</span>
+                </div>
+              </div>
+            </div>
           </div>
 
-          {/* Tabs */}
-          <div className="flex gap-2 border-b-2 border-gray-200 dark:border-gray-700">
-            <button
-              onClick={() => setActiveTab('notes')}
-              className={`px-6 py-3 font-bold rounded-t-xl transition-all ${
-                activeTab === 'notes'
-                  ? 'bg-gradient-to-r from-orange-500 to-pink-500 text-white'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
-            >
-              📝 Notas
-            </button>
-            <button
-              onClick={() => setActiveTab('checklist')}
-              className={`px-6 py-3 font-bold rounded-t-xl transition-all relative ${
-                activeTab === 'checklist'
-                  ? 'bg-gradient-to-r from-pink-500 to-purple-500 text-white'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
-            >
-              ✅ Ficha ({completedCount}/{totalCount})
-            </button>
-            <button
-              onClick={() => setActiveTab('photos')}
-              className={`px-6 py-3 font-bold rounded-t-xl transition-all relative ${
-                activeTab === 'photos'
-                  ? 'bg-gradient-to-r from-purple-500 to-orange-500 text-white'
-                  : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
-              }`}
-            >
-              📷 Fotos ({photos.length})
-            </button>
-          </div>
+          {/* Observações */}
+          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200">Observações</h3>
+              <button
+                onClick={() => setIsEditing(!isEditing)}
+                className="p-2 rounded-xl bg-orange-100 dark:bg-orange-900/30 hover:scale-110 transition-transform"
+              >
+                <Edit3 className="w-5 h-5 text-orange-600 dark:text-orange-400" />
+              </button>
+            </div>
 
-          {/* Conteúdo das Tabs */}
-          {activeTab === 'notes' && (
-            <div>
-              <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                Observações
-              </label>
+            {isEditing ? (
               <textarea
                 value={notes}
                 onChange={(e) => setNotes(e.target.value)}
-                onBlur={saveNotes}
-                rows={8}
-                className="w-full px-4 py-3 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-900 focus:border-orange-500 focus:ring-4 focus:ring-orange-200 dark:focus:ring-orange-900/50 transition-all"
-                placeholder="Adicione observações sobre este agendamento..."
+                className="w-full px-4 py-3 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-800 focus:border-orange-500 focus:ring-4 focus:ring-orange-200 dark:focus:ring-orange-900/50 transition-all"
+                rows={4}
+                placeholder="Adicione observações sobre o agendamento..."
               />
-            </div>
-          )}
+            ) : (
+              <p className="text-gray-700 dark:text-gray-300">
+                {notes || 'Nenhuma observação registrada.'}
+              </p>
+            )}
+          </div>
 
-          {activeTab === 'checklist' && (
-            <div className="space-y-4">
-              {/* Barra de Progresso */}
-              {totalCount > 0 && (
-                <div className="bg-gray-100 dark:bg-gray-900 rounded-xl p-4">
-                  <div className="flex justify-between text-sm font-bold mb-2">
-                    <span className="text-gray-700 dark:text-gray-300">Progresso</span>
-                    <span className="text-purple-600 dark:text-purple-400">{Math.round(progress)}%</span>
-                  </div>
-                  <div className="w-full bg-gray-300 dark:bg-gray-700 rounded-full h-3 overflow-hidden">
-                    <div
-                      className="h-full bg-gradient-to-r from-pink-500 to-purple-500 transition-all duration-500"
-                      style={{ width: `${progress}%` }}
-                    />
-                  </div>
+          {/* Checklist */}
+          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200">Ficha de Serviço</h3>
+              {isEditing && (
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={newChecklistItem}
+                    onChange={(e) => setNewChecklistItem(e.target.value)}
+                    onKeyPress={(e) => e.key === 'Enter' && addChecklistItem()}
+                    placeholder="Novo item..."
+                    className="px-3 py-2 rounded-xl border-2 border-purple-200 dark:border-purple-800 bg-white dark:bg-gray-800 focus:border-purple-500 transition-all text-sm"
+                  />
+                  <button
+                    onClick={addChecklistItem}
+                    className="p-2 rounded-xl bg-purple-100 dark:bg-purple-900/30 hover:scale-110 transition-transform"
+                  >
+                    <Plus className="w-4 h-4 text-purple-600 dark:text-purple-400" />
+                  </button>
                 </div>
               )}
+            </div>
 
-              {/* Adicionar Item */}
-              <div className="flex gap-2">
-                <input
-                  type="text"
-                  value={newChecklistItem}
-                  onChange={(e) => setNewChecklistItem(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && addChecklistItem()}
-                  placeholder="Adicionar item à ficha..."
-                  className="flex-1 px-4 py-3 rounded-xl border-2 border-pink-200 dark:border-pink-800 bg-white dark:bg-gray-900 focus:border-pink-500 focus:ring-4 focus:ring-pink-200 dark:focus:ring-pink-900/50 transition-all"
-                />
-                <button
-                  onClick={addChecklistItem}
-                  className="px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-lg"
-                >
-                  <Plus className="w-5 h-5" />
-                </button>
-              </div>
-
-              {/* Lista de Itens */}
+            {checklist.length === 0 ? (
+              <p className="text-gray-500 dark:text-gray-400 text-center py-4">
+                {isEditing ? 'Adicione itens à ficha de serviço' : 'Nenhum item na ficha de serviço'}
+              </p>
+            ) : (
               <div className="space-y-2">
-                {checklist.length === 0 ? (
-                  <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                    Nenhum item na ficha. Adicione itens acima!
-                  </div>
-                ) : (
-                  checklist.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`flex items-center gap-3 p-4 rounded-xl border-2 transition-all ${
-                        item.completed
-                          ? 'bg-green-50 dark:bg-green-900/20 border-green-300 dark:border-green-700'
-                          : 'bg-white dark:bg-gray-900 border-pink-200 dark:border-pink-800'
-                      }`}
+                {checklist.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 p-3 bg-white dark:bg-gray-800 rounded-xl">
+                    <button
+                      onClick={() => isEditing && toggleChecklistItem(item.id)}
+                      className={`flex-shrink-0 ${isEditing ? 'cursor-pointer hover:scale-110' : 'cursor-default'} transition-transform`}
                     >
-                      <button
-                        onClick={() => toggleChecklistItem(item.id)}
-                        className={`flex-shrink-0 w-6 h-6 rounded-lg border-2 flex items-center justify-center transition-all ${
-                          item.completed
-                            ? 'bg-green-500 border-green-500'
-                            : 'border-gray-300 dark:border-gray-600 hover:border-pink-500'
-                        }`}
-                      >
-                        {item.completed && <Check className="w-4 h-4 text-white" />}
-                      </button>
-                      <span
-                        className={`flex-1 ${
-                          item.completed
-                            ? 'line-through text-gray-500 dark:text-gray-400'
-                            : 'text-gray-800 dark:text-gray-200'
-                        }`}
-                      >
-                        {item.text}
-                      </span>
+                      {item.completed ? (
+                        <CheckCircle2 className="w-5 h-5 text-green-600" />
+                      ) : (
+                        <Circle className="w-5 h-5 text-gray-400" />
+                      )}
+                    </button>
+                    <span className={`flex-1 ${item.completed ? 'line-through text-gray-500' : 'text-gray-700 dark:text-gray-300'}`}>
+                      {item.text}
+                    </span>
+                    {isEditing && (
                       <button
                         onClick={() => removeChecklistItem(item.id)}
-                        className="flex-shrink-0 p-2 text-red-500 hover:bg-red-100 dark:hover:bg-red-900/30 rounded-lg transition-colors"
+                        className="p-1 rounded-lg hover:bg-red-100 dark:hover:bg-red-900/30 transition-colors"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        <Trash2 className="w-4 h-4 text-red-500" />
                       </button>
-                    </div>
-                  ))
-                )}
+                    )}
+                  </div>
+                ))}
               </div>
-            </div>
-          )}
+            )}
+          </div>
 
-          {activeTab === 'photos' && (
-            <div className="space-y-4">
-              {/* Upload de Fotos */}
-              <div className="border-2 border-dashed border-purple-300 dark:border-purple-700 rounded-xl p-8 text-center">
-                <input
-                  type="file"
-                  accept="image/*"
-                  multiple
-                  onChange={handlePhotoUpload}
-                  className="hidden"
-                  id="photo-upload"
-                />
-                <label
-                  htmlFor="photo-upload"
-                  className="cursor-pointer flex flex-col items-center gap-3"
+          {/* Fotos */}
+          <div className="bg-gray-50 dark:bg-gray-900 p-4 rounded-xl">
+            <div className="flex items-center justify-between mb-3">
+              <h3 className="text-lg font-bold text-gray-800 dark:text-gray-200">Fotos</h3>
+              {isEditing && (
+                <button
+                  onClick={addPhoto}
+                  className="flex items-center gap-2 px-4 py-2 bg-pink-100 dark:bg-pink-900/30 text-pink-700 dark:text-pink-300 rounded-xl font-bold hover:scale-105 transition-transform"
                 >
-                  <div className="p-4 bg-gradient-to-br from-purple-100 to-pink-100 dark:from-purple-900/30 dark:to-pink-900/30 rounded-2xl">
-                    <Camera className="w-12 h-12 text-purple-600 dark:text-purple-400" />
-                  </div>
-                  <div>
-                    <p className="text-lg font-bold text-gray-700 dark:text-gray-300">
-                      Clique para adicionar fotos
-                    </p>
-                    <p className="text-sm text-gray-500 dark:text-gray-400">
-                      Ou arraste e solte aqui
-                    </p>
-                  </div>
-                </label>
-              </div>
-
-              {/* Galeria de Fotos */}
-              {photos.length === 0 ? (
-                <div className="text-center py-8 text-gray-500 dark:text-gray-400">
-                  Nenhuma foto adicionada ainda
-                </div>
-              ) : (
-                <div className="grid grid-cols-2 sm:grid-cols-3 gap-4">
-                  {photos.map((photo, index) => (
-                    <div
-                      key={index}
-                      className="relative group aspect-square rounded-xl overflow-hidden border-2 border-purple-200 dark:border-purple-800"
-                    >
-                      <img
-                        src={photo}
-                        alt={`Foto ${index + 1}`}
-                        className="w-full h-full object-cover"
-                      />
-                      <button
-                        onClick={() => removePhoto(index)}
-                        className="absolute top-2 right-2 p-2 bg-red-500 text-white rounded-lg opacity-0 group-hover:opacity-100 transition-opacity shadow-lg hover:scale-110"
-                      >
-                        <Trash2 className="w-4 h-4" />
-                      </button>
-                    </div>
-                  ))}
-                </div>
+                  <Plus className="w-4 h-4" />
+                  Adicionar Foto
+                </button>
               )}
             </div>
-          )}
 
-          <div className="flex justify-end pt-4 border-t-2 border-gray-200 dark:border-gray-700">
+            {photos.length === 0 ? (
+              <p className="text-gray-500 dark:text-gray-400 text-center py-4">
+                Nenhuma foto registrada
+              </p>
+            ) : (
+              <div className="grid grid-cols-2 md:grid-cols-3 gap-4">
+                {photos.map((photo, index) => (
+                  <div key={index} className="relative group">
+                    <img
+                      src={photo}
+                      alt={`Foto ${index + 1}`}
+                      className="w-full h-32 object-cover rounded-xl"
+                    />
+                    {isEditing && (
+                      <button
+                        onClick={() => removePhoto(index)}
+                        className="absolute top-2 right-2 p-1 bg-red-500 text-white rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    )}
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Ações */}
+          <div className="flex gap-3 pt-4 border-t-2 border-gray-200 dark:border-gray-700">
             <button
               onClick={onClose}
-              className="px-8 py-3 bg-gradient-to-r from-orange-500 to-pink-500 text-white font-bold rounded-xl hover:scale-105 transition-transform shadow-lg"
+              className="flex-1 px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:scale-105 transition-transform"
             >
               Fechar
             </button>
+
+            {isEditing ? (
+              <button
+                onClick={handleSave}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-pink-500 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-lg"
+              >
+                <Save className="w-5 h-5 inline mr-2" />
+                Salvar Alterações
+              </button>
+            ) : (
+              <button
+                onClick={() => setIsEditing(true)}
+                className="flex-1 px-6 py-3 bg-gradient-to-r from-purple-500 to-pink-500 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-lg"
+              >
+                <Edit3 className="w-5 h-5 inline mr-2" />
+                Editar
+              </button>
+            )}
           </div>
         </div>
       </div>

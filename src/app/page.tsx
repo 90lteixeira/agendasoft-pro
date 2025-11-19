@@ -157,31 +157,28 @@ export default function Home() {
         .order('appointment_time', { ascending: true });
       
       if (appointmentsData) {
-        // Parse JSON fields corretamente
+        // Carregar dados do localStorage para checklist e photos
         const parsedAppointments = appointmentsData.map(apt => {
           let checklist: ChecklistItem[] = [];
           let photos: string[] = [];
           
-          // Tentar parsear checklist se existir
-          if (apt.checklist) {
-            try {
-              checklist = typeof apt.checklist === 'string' 
-                ? JSON.parse(apt.checklist) 
-                : apt.checklist;
-            } catch (e) {
-              checklist = [];
+          // Tentar carregar do localStorage
+          try {
+            const savedChecklist = localStorage.getItem(`checklist_${apt.id}`);
+            if (savedChecklist) {
+              checklist = JSON.parse(savedChecklist);
             }
+          } catch (e) {
+            checklist = [];
           }
           
-          // Tentar parsear photos se existir
-          if (apt.photos) {
-            try {
-              photos = typeof apt.photos === 'string' 
-                ? JSON.parse(apt.photos) 
-                : apt.photos;
-            } catch (e) {
-              photos = [];
+          try {
+            const savedPhotos = localStorage.getItem(`photos_${apt.id}`);
+            if (savedPhotos) {
+              photos = JSON.parse(savedPhotos);
             }
+          } catch (e) {
+            photos = [];
           }
           
           return {
@@ -241,9 +238,17 @@ export default function Home() {
 
   const createAppointment = async (appointmentData: Partial<Appointment>) => {
     try {
+      // CORREÇÃO: Garantir que a data seja salva corretamente sem problemas de fuso horário
+      const correctedData = {
+        ...appointmentData,
+        appointment_date: appointmentData.appointment_date ? 
+          new Date(appointmentData.appointment_date + 'T00:00:00').toISOString().split('T')[0] : 
+          appointmentData.appointment_date
+      };
+
       const { data, error } = await supabase
         .from('appointments')
-        .insert([appointmentData])
+        .insert([correctedData])
         .select()
         .single();
 
@@ -267,9 +272,12 @@ export default function Home() {
         return;
       }
 
+      // Remover country_code antes de salvar (não existe no banco)
+      const { country_code, ...dataToSave } = clientData;
+
       const { data, error } = await supabase
         .from('clients')
-        .insert([clientData])
+        .insert([dataToSave])
         .select()
         .single();
 
@@ -285,31 +293,26 @@ export default function Home() {
 
   const updateAppointment = async (id: string, updateData: any) => {
     try {
-      // Preparar dados para salvar no banco
+      // Preparar dados para salvar no banco (apenas notes e status)
       const dataToSave: any = {};
       
       if (updateData.notes !== undefined) {
         dataToSave.notes = updateData.notes;
       }
       
-      if (updateData.checklist !== undefined) {
-        dataToSave.checklist = JSON.stringify(updateData.checklist);
-      }
-      
-      if (updateData.photos !== undefined) {
-        dataToSave.photos = JSON.stringify(updateData.photos);
-      }
-      
       if (updateData.status !== undefined) {
         dataToSave.status = updateData.status;
       }
 
-      const { error } = await supabase
-        .from('appointments')
-        .update(dataToSave)
-        .eq('id', id);
+      // Salvar no banco apenas se houver dados válidos
+      if (Object.keys(dataToSave).length > 0) {
+        const { error } = await supabase
+          .from('appointments')
+          .update(dataToSave)
+          .eq('id', id);
 
-      if (error) throw error;
+        if (error) throw error;
+      }
       
       // Recarregar dados após atualizar
       await loadData();
@@ -401,8 +404,10 @@ export default function Home() {
     const matchesSearch = apt.client_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
                          apt.service.toLowerCase().includes(searchTerm.toLowerCase());
     
-    const aptDate = new Date(apt.appointment_date);
+    // CORREÇÃO: Comparar datas corretamente sem problemas de fuso horário
+    const aptDate = new Date(apt.appointment_date + 'T00:00:00');
     const today = new Date(selectedDate);
+    today.setHours(0, 0, 0, 0); // Zerar horas para comparação justa
     
     if (viewMode === 'daily') {
       return matchesSearch && 
@@ -508,7 +513,7 @@ export default function Home() {
                 <h1 className="text-2xl font-bold bg-gradient-to-r from-orange-500 via-pink-500 to-purple-600 bg-clip-text text-transparent">
                   Agendasoft Pro
                 </h1>
-                <p className="text-sm text-gray-600 dark:text-gray-400">{t.dashboard}</p>
+                <p className="text-sm text-gray-600 dark:text-gray-400">Dashboard</p>
               </div>
             </div>
             
@@ -552,7 +557,7 @@ export default function Home() {
               onClick={goToToday}
               className="text-sm text-orange-600 dark:text-orange-400 hover:underline font-medium"
             >
-              {t.today}
+              Hoje
             </button>
           </div>
           
@@ -575,7 +580,7 @@ export default function Home() {
                   : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:scale-105'
               }`}
             >
-              {t.daily}
+              Diário
             </button>
             <button
               onClick={() => setViewMode('weekly')}
@@ -585,7 +590,7 @@ export default function Home() {
                   : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:scale-105'
               }`}
             >
-              {t.weekly}
+              Semanal
             </button>
             <button
               onClick={() => setViewMode('monthly')}
@@ -595,7 +600,7 @@ export default function Home() {
                   : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:scale-105'
               }`}
             >
-              {t.monthly}
+              Mensal
             </button>
           </div>
 
@@ -605,14 +610,14 @@ export default function Home() {
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-500 text-white font-bold rounded-xl shadow-lg hover:scale-105 transition-transform"
             >
               <Users className="w-5 h-5" />
-              <span className="hidden sm:inline">{t.newClient}</span>
+              <span className="hidden sm:inline">Novo Cliente</span>
             </button>
             <button
               onClick={() => setShowNewAppointment(true)}
               className="flex items-center gap-2 px-6 py-3 bg-gradient-to-r from-orange-500 to-pink-500 text-white font-bold rounded-xl shadow-lg hover:scale-105 transition-transform"
             >
               <Plus className="w-5 h-5" />
-              <span className="hidden sm:inline">{t.newAppointment}</span>
+              <span className="hidden sm:inline">Novo Agendamento</span>
             </button>
           </div>
         </div>
@@ -623,7 +628,7 @@ export default function Home() {
             <Search className="absolute left-4 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" />
             <input
               type="text"
-              placeholder={t.search}
+              placeholder="Buscar agendamentos..."
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
               className="w-full pl-12 pr-4 py-3 rounded-xl border-2 border-orange-200 dark:border-orange-800 bg-white dark:bg-gray-800 focus:border-orange-500 focus:ring-4 focus:ring-orange-200 dark:focus:ring-orange-900/50 transition-all shadow-lg"
@@ -639,7 +644,7 @@ export default function Home() {
           {filteredAppointments.length === 0 ? (
             <div className="text-center py-20 bg-white dark:bg-gray-800 rounded-2xl shadow-lg border-2 border-dashed border-orange-300 dark:border-orange-700">
               <Calendar className="w-20 h-20 mx-auto text-gray-400 mb-4" />
-              <p className="text-xl font-bold text-gray-600 dark:text-gray-400">{t.noAppointments}</p>
+              <p className="text-xl font-bold text-gray-600 dark:text-gray-400">Nenhum agendamento encontrado</p>
             </div>
           ) : (
             filteredAppointments.map((apt) => {
@@ -661,7 +666,7 @@ export default function Home() {
                         </h3>
                         <span className={`inline-flex items-center gap-1 px-3 py-1 rounded-full text-sm font-bold border-2 ${getStatusColor(apt.status)}`}>
                           {getStatusIcon(apt.status)}
-                          {t[apt.status]}
+                          {apt.status === 'pending' ? 'Pendente' : apt.status === 'confirmed' ? 'Confirmado' : apt.status === 'completed' ? 'Concluído' : 'Cancelado'}
                         </span>
                         
                         {/* Indicadores de Ficha e Fotos */}
@@ -682,7 +687,7 @@ export default function Home() {
                       <div className="flex flex-wrap gap-4 text-sm text-gray-600 dark:text-gray-400">
                         <div className="flex items-center gap-2">
                           <Calendar className="w-4 h-4 text-orange-500" />
-                          <span className="font-medium">{new Date(apt.appointment_date).toLocaleDateString()}</span>
+                          <span className="font-medium">{new Date(apt.appointment_date + 'T00:00:00').toLocaleDateString('pt-BR')}</span>
                         </div>
                         <div className="flex items-center gap-2">
                           <Clock className="w-4 h-4 text-pink-500" />
@@ -763,7 +768,7 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
             <div className="sticky top-0 bg-gradient-to-r from-orange-500 via-pink-500 to-purple-600 p-6 rounded-t-2xl">
-              <h2 className="text-2xl font-bold text-white">{t.newAppointment}</h2>
+              <h2 className="text-2xl font-bold text-white">Novo Agendamento</h2>
             </div>
             
             <form
@@ -787,7 +792,7 @@ export default function Home() {
             >
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.client}
+                  Cliente
                 </label>
                 <select
                   name="client_id"
@@ -807,7 +812,7 @@ export default function Home() {
               {!selectedClientId && (
                 <div>
                   <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                    {t.clientName}
+                    Nome do cliente
                   </label>
                   <input
                     type="text"
@@ -821,7 +826,7 @@ export default function Home() {
               <div className="grid grid-cols-2 gap-4">
                 <div>
                   <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                    {t.date}
+                    Data
                   </label>
                   <input
                     type="date"
@@ -832,7 +837,7 @@ export default function Home() {
                 </div>
                 <div>
                   <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                    {t.time}
+                    Horário
                   </label>
                   <input
                     type="time"
@@ -845,7 +850,7 @@ export default function Home() {
 
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.service}
+                  Serviço
                 </label>
                 <input
                   type="text"
@@ -857,7 +862,7 @@ export default function Home() {
 
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.notes}
+                  Observações
                 </label>
                 <textarea
                   name="notes"
@@ -875,13 +880,13 @@ export default function Home() {
                   }}
                   className="flex-1 px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:scale-105 transition-transform"
                 >
-                  {t.cancel}
+                  Cancelar
                 </button>
                 <button
                   type="submit"
                   className="flex-1 px-6 py-3 bg-gradient-to-r from-orange-500 to-pink-500 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-lg"
                 >
-                  {t.save}
+                  Salvar
                 </button>
               </div>
             </form>
@@ -894,7 +899,7 @@ export default function Home() {
         <div className="fixed inset-0 bg-black/50 backdrop-blur-sm flex items-center justify-center p-4 z-50">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl max-w-lg w-full">
             <div className="bg-gradient-to-r from-pink-500 to-purple-600 p-6 rounded-t-2xl">
-              <h2 className="text-2xl font-bold text-white">{t.newClient}</h2>
+              <h2 className="text-2xl font-bold text-white">Novo Cliente</h2>
             </div>
             
             <form
@@ -912,7 +917,7 @@ export default function Home() {
             >
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.clientName}
+                  Nome do cliente
                 </label>
                 <input
                   type="text"
@@ -924,7 +929,7 @@ export default function Home() {
 
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.phone}
+                  Telefone
                 </label>
                 <div className="flex gap-2">
                   <select
@@ -953,7 +958,7 @@ export default function Home() {
 
               <div>
                 <label className="block text-sm font-bold text-gray-700 dark:text-gray-300 mb-2">
-                  {t.email} <span className="text-gray-500 font-normal">(opcional)</span>
+                  Email <span className="text-gray-500 font-normal">(opcional)</span>
                 </label>
                 <input
                   type="email"
@@ -970,13 +975,13 @@ export default function Home() {
                   onClick={() => setShowNewClient(false)}
                   className="flex-1 px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-xl font-bold hover:scale-105 transition-transform"
                 >
-                  {t.cancel}
+                  Cancelar
                 </button>
                 <button
                   type="submit"
                   className="flex-1 px-6 py-3 bg-gradient-to-r from-pink-500 to-purple-600 text-white rounded-xl font-bold hover:scale-105 transition-transform shadow-lg"
                 >
-                  {t.save}
+                  Salvar
                 </button>
               </div>
             </form>
